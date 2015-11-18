@@ -2,47 +2,103 @@ module Game where
 import Html exposing (Html, text, div, h4, br, button)
 import Html.Events exposing (onClick)
 import Signal exposing (Signal, (~), (<~))
+import LocalStorage
+import Task exposing (Task, andThen)
+import Json.Encode exposing (Value, encode, object, string, int)
+import Json.Decode as Decode exposing (Decoder, (:=))
 
 type Page = CounterA | CounterB
-
 type alias Model = { counta: Int, countb: Int, page: Page }
+type alias StringyModel = { counta: Int, countb: Int, page: String }
+type alias ActSig = Signal.Address Action
+
+main : Signal Html.Html
+main = (view actions.address) <~ hello.signal ~ model
 
 initialModel : Model
 initialModel = { counta = 0, countb = 0, page = CounterA}
 
+jModel : Model -> Value
+jModel model = object [
+    ("counta", int model.counta),
+    ("countb", int model.countb),
+    ("page", string (toString model.page))
+  ]
+
+modelToJson : Model -> String
+modelToJson model = encode 0 (jModel model)
+
+modelFromJson : String -> Model
+modelFromJson json =
+  let decodeResult = Decode.decodeString modelDecoder json
+  in
+    case decodeResult of
+      Result.Ok mod -> modelFromStringy mod
+      Result.Err errStr -> initialModel
+
+modelDecoder : Decoder StringyModel
+modelDecoder =
+  Decode.object3 StringyModel
+    ("counta" := Decode.int)
+    ("countb" := Decode.int)
+    ("page" := Decode.string)
+
+-- pageDecoder : Decoder Page
+-- pageDecoder = Decode.object1 initialModel.page
+
+modelFromStringy : StringyModel -> Model
+modelFromStringy stm =
+  let a = stm.counta
+      b = stm.countb
+  in case stm.page of
+    "CounterB" -> {counta = a, countb = b, page = CounterB}
+    "CounterA" -> {counta = b, countb = a, page = CounterA}
+
 model : Signal Model
 model = Signal.foldp update initialModel actions.signal
 
-view : Signal.Address Action -> Model -> Html.Html
-view address model =
-  case model.page of
-    CounterA -> viewA model address
-    CounterB -> viewB model address
+anBr : Html.Html
+anBr = br [] []
 
-viewA : Model -> Signal.Address Action -> Html.Html
-viewA model address = div [] [
-        countForPage model,
-        br [] [],
-        button [ onClick address (CountOp CounterA) ] [ text "+" ],
-        br [] [],
-        button [ onClick address (SwitchPage CounterB) ] [ text ">" ]
-      ]
+view : ActSig -> String -> Model -> Html.Html
+view address helloStr model = div [] [
+                       div [] [text helloStr], anBr,
+                       pageHeader model, anBr,
+                       countForPage model, anBr,
+                       pageActions address model, anBr,
+                       switchPage address model, anBr
+                     ]
 
-viewB : Model -> Signal.Address Action -> Html.Html
-viewB model address = div [] [
-        h4 [] [text ((toString model.page) ++ ": ")],
-        countForPage model,
-        br [] [],
-        button [ onClick address (CountOp CounterB) ] [ text "+" ],
-        br [] [],
-        button [ onClick address (SwitchPage CounterA) ] [ text "<" ]
-      ]
+pageHeader : Model -> Html.Html
+pageHeader model = h4 [] [text (toString model.page)]
+
+pageActions : ActSig -> Model -> Html.Html
+pageActions address model =
+   button [ onClick address (CountOp model.page) ] [ text "+" ]
+
+switchPage : ActSig -> Model -> Html.Html
+switchPage address model =
+   button [ onClick address (SwitchPage (nextPage model)) ] [ nextButton model ]
+
+nextPage : Model -> Page
+nextPage model =
+  if model.page == CounterB then CounterA else CounterB
+
+nextButton : Model -> Html.Html
+nextButton model =
+  let str =
+    case model.page of
+      CounterB -> "<"
+      CounterA -> ">"
+  in text str
 
 countForPage : Model -> Html.Html
 countForPage model =
-  case model.page of
-    CounterA -> h4 [] [text (toString model.counta)]
-    CounterB -> h4 [] [text (toString model.countb)]
+  let count =
+    case model.page of
+      CounterA -> model.counta
+      CounterB -> model.countb
+  in h4 [] [text (toString count)]
 
 type Action =
   NoOp
@@ -52,20 +108,46 @@ type Action =
 actions : Signal.Mailbox Action
 actions = Signal.mailbox NoOp
 
-update :  Action -> Model -> Model
-update act moderu =
-  case act of
-    NoOp -> moderu
-    CountOp (CounterA) -> { moderu | counta <- moderu.counta + 1 }
-    CountOp (CounterB) -> { moderu | countb <- moderu.countb + 1 }
-    SwitchPage (CounterA) -> { moderu | page <- CounterA }
-    SwitchPage (CounterB) -> { moderu | page <- CounterB }
+update : Action -> Model -> Model
+update action model =
+  case action of
+    NoOp -> model
+    CountOp (counter) -> countUp counter model
+    SwitchPage newPage -> { model | page <- newPage }
 
-main : Signal Html.Html
-main = (view actions.address) <~ model
+countUp : Page -> Model -> Model
+countUp counter model =
+  case counter of
+    CounterA -> { model | counta <- model.counta + 1 }
+    CounterB -> { model | countb <- model.countb + 1 }
+
+hello : Signal.Mailbox String
+hello = Signal.mailbox "waiting..."
+
+sendIt : Maybe String -> Task LocalStorage.Error ()
+sendIt str =
+  case str of
+    Just val -> Signal.send hello.address val
+    Nothing -> Signal.send hello.address "nope"
+
+setHello : String -> Task LocalStorage.Error String
+setHello count = LocalStorage.set "some-key" (toString count)
+
+port runHello : Task LocalStorage.Error ()
+port runHello = (LocalStorage.get "some-key") `andThen` sendIt --Signal.send hello.address
+
+-- port setIt : Task LocalStorage.Error String
+-- port setIt = setHello (modelToJson initialModel)
+
 --x goal 0 - compilable program that displays a thing
---x  goal 1 - basically make a countaer. button that sends signal that affects model
---  goal 2 - hook up model to port, properly receive port data after a wait time
---x  goal 3 - multi-page 'navigation' based on signals and port interaction
+--x goal 1 - basically make a countaer. button that sends signal that affects model
+--x goal 2 - multi-page 'navigation' based on signals and port interaction
+--  goal 3 - persist to localstorage using elm
+--  gaol 3.01 - use json decode/encode to persist model to localstorage
+--  goal 3.1 - Talk to server w/ http
+--  goal 3.2 - Give server seed (maybe w/ native geoloc), get procgen response
 --  goal 4 - silly procgenish things for buttons on one page to lead to random text on another
 --  andthen - try to make the real game?
+
+-- Maybe do
+--  goal 3 - hook up model to port, properly receive port data after a wait time
