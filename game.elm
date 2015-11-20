@@ -13,7 +13,8 @@ type alias StringyModel = { counta: Int, countb: Int, page: String }
 type alias ActSig = Signal.Address Action
 
 main : Signal Html.Html
-main = Signal.map2 (view actions.address) hello.signal model
+main = Signal.map (view actions.address) model
+
 
 initialModel : Model
 initialModel = { counta = 0, countb = 0, page = CounterA}
@@ -61,9 +62,8 @@ model = Signal.foldp update initialModel actions.signal
 anBr : Html.Html
 anBr = br [] []
 
-view : ActSig -> String -> Model -> Html.Html
-view address helloStr model = div [] [
-                       div [] [text helloStr], anBr,
+view : ActSig -> Model -> Html.Html
+view address model = div [] [
                        pageHeader model, anBr,
                        countForPage model, anBr,
                        pageActions address model, anBr,
@@ -105,6 +105,7 @@ type Action =
   NoOp
   | CountOp (Page)
   | SwitchPage (Page)
+  | SetModel (Model)
 
 actions : Signal.Mailbox Action
 actions = Signal.mailbox NoOp
@@ -115,6 +116,10 @@ update action model =
     NoOp -> model
     CountOp (counter) -> countUp counter model
     SwitchPage newPage -> { model | page = newPage }
+    SetModel newModel -> { model |
+                            page = newModel.page,
+                            counta = newModel.counta,
+                            countb = newModel.countb }
 
 countUp : Page -> Model -> Model
 countUp counter model =
@@ -122,20 +127,20 @@ countUp counter model =
     CounterA -> { model | counta = model.counta + 1 }
     CounterB -> { model | countb = model.countb + 1 }
 
-hello : Signal.Mailbox String
-hello = Signal.mailbox "waiting..."
+modelBox : Signal.Mailbox Model
+modelBox = Signal.mailbox initialModel
 
 sendIt : Maybe String -> Task LocalStorage.Error ()
 sendIt str =
   case str of
-    Just val -> Signal.send hello.address val
-    Nothing -> Signal.send hello.address "nope"
+    Just val -> Signal.send actions.address (SetModel (modelFromJson val))
+    Nothing -> Signal.send actions.address NoOp
 
 setHello : String -> Task LocalStorage.Error String
-setHello count = LocalStorage.set "some-key" (toString count)
+setHello count = LocalStorage.set "model-key" (toString count)
 
 port runHello : Task LocalStorage.Error ()
-port runHello = (LocalStorage.get "some-key") `andThen` sendIt --Signal.send hello.address
+port runHello = (LocalStorage.get "model-key") `andThen` sendIt --Signal.send hello.address
 
 -- port setIt : Task LocalStorage.Error String
 -- port setIt = setHello (modelToJson initialModel)
