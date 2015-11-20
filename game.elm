@@ -1,7 +1,7 @@
 module Game where
 import Html exposing (Html, text, div, h4, br, button)
 import Html.Events exposing (onClick)
-import Signal exposing (Signal, (~), (<~))
+import Signal exposing (Signal)
 import LocalStorage
 import Task exposing (Task, andThen)
 import Json.Encode exposing (Value, encode, object, string, int)
@@ -13,7 +13,7 @@ type alias StringyModel = { counta: Int, countb: Int, page: String }
 type alias ActSig = Signal.Address Action
 
 main : Signal Html.Html
-main = (view actions.address) <~ hello.signal ~ model
+main = Signal.map2 (view actions.address) hello.signal model
 
 initialModel : Model
 initialModel = { counta = 0, countb = 0, page = CounterA}
@@ -53,6 +53,7 @@ modelFromStringy stm =
   in case stm.page of
     "CounterB" -> {counta = a, countb = b, page = CounterB}
     "CounterA" -> {counta = b, countb = a, page = CounterA}
+    _ -> {counta = b, countb = a, page = CounterA}
 
 model : Signal Model
 model = Signal.foldp update initialModel actions.signal
@@ -113,13 +114,13 @@ update action model =
   case action of
     NoOp -> model
     CountOp (counter) -> countUp counter model
-    SwitchPage newPage -> { model | page <- newPage }
+    SwitchPage newPage -> { model | page = newPage }
 
 countUp : Page -> Model -> Model
 countUp counter model =
   case counter of
-    CounterA -> { model | counta <- model.counta + 1 }
-    CounterB -> { model | countb <- model.countb + 1 }
+    CounterA -> { model | counta = model.counta + 1 }
+    CounterB -> { model | countb = model.countb + 1 }
 
 hello : Signal.Mailbox String
 hello = Signal.mailbox "waiting..."
