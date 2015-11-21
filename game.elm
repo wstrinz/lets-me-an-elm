@@ -8,22 +8,23 @@ import Json.Encode exposing (Value, encode, object, string, int)
 import Json.Decode as Decode exposing (Decoder, (:=))
 
 type Page = CounterA | CounterB
-type alias Model = { counta: Int, countb: Int, page: Page }
-type alias StringyModel = { counta: Int, countb: Int, page: String }
+type State = Initializing | Loaded
+type alias Model = { counta: Int, countb: Int, page: Page, state: State }
+type alias StringyModel = { counta: Int, countb: Int, page: String, state: String }
 type alias ActSig = Signal.Address Action
 
 main : Signal Html.Html
 main = Signal.map (view actions.address) model
 
-
 initialModel : Model
-initialModel = { counta = 0, countb = 0, page = CounterA}
+initialModel = { counta = 0, countb = 0, page = CounterA, state = Initializing}
 
 jModel : Model -> Value
 jModel model = object [
     ("counta", int model.counta),
     ("countb", int model.countb),
-    ("page", string (toString model.page))
+    ("page", string (toString model.page)),
+    ("state", string (toString model.state))
   ]
 
 modelToJson : Model -> String
@@ -39,22 +40,27 @@ modelFromJson json =
 
 modelDecoder : Decoder StringyModel
 modelDecoder =
-  Decode.object3 StringyModel
+  Decode.object4 StringyModel
     ("counta" := Decode.int)
     ("countb" := Decode.int)
     ("page" := Decode.string)
+    ("state" := Decode.string)
 
--- pageDecoder : Decoder Page
--- pageDecoder = Decode.object1 initialModel.page
+stateFor : String -> State
+stateFor str =
+  case str of
+    "Loaded" -> Loaded
+    _ -> Initializing
 
 modelFromStringy : StringyModel -> Model
 modelFromStringy stm =
   let a = stm.counta
       b = stm.countb
+      s = stateFor stm.state
   in case stm.page of
-    "CounterB" -> {counta = a, countb = b, page = CounterB}
-    "CounterA" -> {counta = b, countb = a, page = CounterA}
-    _ -> {counta = b, countb = a, page = CounterA}
+    "CounterB" -> {counta = a, countb = b, page = CounterB, state = s}
+    "CounterA" -> {counta = a, countb = b, page = CounterA, state = s}
+    _ -> {counta = b, countb = a, page = CounterA, state = s}
 
 model : Signal Model
 model = Signal.foldp update initialModel actions.signal
@@ -113,13 +119,24 @@ actions = Signal.mailbox NoOp
 update : Action -> Model -> Model
 update action model =
   case action of
-    NoOp -> model
-    CountOp (counter) -> countUp counter model
-    SwitchPage newPage -> { model | page = newPage }
     SetModel newModel -> { model |
                             page = newModel.page,
                             counta = newModel.counta,
-                            countb = newModel.countb }
+                            countb = newModel.countb,
+                            state = Loaded}
+    _ ->
+      case model.state of
+        Initializing -> model
+        Loaded ->
+          case action of
+            NoOp -> model
+            CountOp (counter) -> countUp counter model
+            SwitchPage newPage -> { model | page = newPage }
+            SetModel newModel -> { model |
+                                    page = newModel.page,
+                                    counta = newModel.counta,
+                                    countb = newModel.countb,
+                                    state = newModel.state }
 
 countUp : Page -> Model -> Model
 countUp counter model =
@@ -127,20 +144,52 @@ countUp counter model =
     CounterA -> { model | counta = model.counta + 1 }
     CounterB -> { model | countb = model.countb + 1 }
 
-modelBox : Signal.Mailbox Model
-modelBox = Signal.mailbox initialModel
+-- sendIt : Maybe String -> Task LocalStorage.Error ()
+-- sendIt str =
+--   case str of
+--     Just val -> Signal.send actions.address (SetModel (modelFromJson val))
+--     Nothing -> Signal.send actions.address (SetModel initialModel)
 
-sendIt : Maybe String -> Task LocalStorage.Error ()
-sendIt str =
-  case str of
-    Just val -> Signal.send actions.address (SetModel (modelFromJson val))
-    Nothing -> Signal.send actions.address NoOp
+-- possiblySetModel -> Task LocalStorage.Error -> Maybe (Signal Action)
 
-setHello : String -> Task LocalStorage.Error String
-setHello count = LocalStorage.set "model-key" (toString count)
+-- port loadModel : Task LocalStorage.Error (Maybe String)
+-- port loadModel = LocalStorage.get "model-key" `andThen` possiblySetModel --Signal.send hello.address
 
-port runHello : Task LocalStorage.Error ()
-port runHello = (LocalStorage.get "model-key") `andThen` sendIt --Signal.send hello.address
+saveModel : Model -> Task LocalStorage.Error String
+saveModel model = LocalStorage.set "model-key" (modelToJson model)
+
+watchModel : Model -> Task LocalStorage.Error String
+watchModel model =
+  case model.state of
+    Initializing -> LocalStorage.set "loading" "isLoading"
+    Loaded -> saveModel model
+
+port modelWatcher : Signal (Task LocalStorage.Error String)
+port modelWatcher = Signal.map watchModel model
+
+-- setupModel : Maybe String -> Task LocalStorage.Error Action
+-- setupModel modString =
+--   let loadedModel =
+--     case modString of
+--       Just str -> modelFromJson str
+--       Nothing -> initialModel
+--   in Signal.send actions.address (SetModel (loadedModel))
+--
+-- saveStorageStateIGuess lastResult = LocalStorage.set "loading" "done!"
+
+port modelLoader : Task LocalStorage.Error ()
+port modelLoader =
+  let handle str =
+    case str of
+      Just s -> Signal.send actions.address (SetModel (modelFromJson s))
+      Nothing -> Signal.send actions.address (SetModel (initialModel))
+  in (LocalStorage.get "model-key") `andThen` handle
+-- modelBox : Signal.Mailbox Model
+-- modelBox = Signal.mailbox initialModel
+
+-- setHello : String -> Task LocalStorage.Error String
+-- setHello count = LocalStorage.set "model-key" (toString count)
+
 
 -- port setIt : Task LocalStorage.Error String
 -- port setIt = setHello (modelToJson initialModel)
